@@ -11,8 +11,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
-        name: 'ハンドボール分析アプリ',
-        short_name: 'HB分析',
+        name: 'CourtEye',
+        short_name: 'CourtEye',
         description: '学生ハンドボールチーム向け試合スタッツ分析アプリ',
         theme_color: '#10161d',
         background_color: '#10161d',
@@ -22,7 +22,7 @@ export default defineConfig({
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+          { src: 'icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
         ]
       },
       workbox: {
