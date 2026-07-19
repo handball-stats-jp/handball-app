@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Play, Pause, RotateCcw, X, Users, Target, Calendar, MapPin, Plus, Trash2, ArrowRight, BarChart3, Video, Star } from "lucide-react";
+import { Play, Pause, RotateCcw, X, Users, Target, Calendar, MapPin, Plus, Trash2, ArrowRight, BarChart3, Video, Star, Download, Upload, List } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 const FONT_STYLE = `
@@ -120,6 +120,7 @@ function clone(obj) {
 // ローカルストレージへの保存(実際にブラウザにインストールして使うWebアプリのため、
 // リロードしても試合データが消えないようにする)
 const STORAGE_KEY = "handball_app_match_v1";
+const ARCHIVE_KEY = "courteye_archive_v1"; // 過去の試合を溜めていくアーカイブ(同じ端末内)
 
 function loadSaved() {
   try {
@@ -130,9 +131,19 @@ function loadSaved() {
   }
 }
 
+function loadArchive() {
+  try {
+    const raw = localStorage.getItem(ARCHIVE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function HandballLiveInput() {
   const saved = loadSaved();
-  const [step, setStep] = useState(saved?.step ?? "setup"); // setup | live | dashboard
+  const [step, setStep] = useState(saved?.step ?? "setup"); // setup | live | dashboard | archive
+  const [archive, setArchive] = useState(() => loadArchive());
   const [dashboardTab, setDashboardTab] = useState("summary"); // summary | players | timeline
   const [dashboardTeamView, setDashboardTeamView] = useState("us");
   const [playerDetailOpen, setPlayerDetailOpen] = useState(null); // { team, num, name }
@@ -164,6 +175,7 @@ export default function HandballLiveInput() {
   const [toast, setToast] = useState("");
   const [showOnlyMarked, setShowOnlyMarked] = useState(false);
   const toastTimer = useRef(null);
+  const fileInputRef = useRef(null);
 
   // 試合データが変わるたびにローカルストレージへ自動保存(リロードしても消えない)
   useEffect(() => {
@@ -177,7 +189,54 @@ export default function HandballLiveInput() {
     }
   }, [step, matchInfo, roster, teamNames, pairs, score, elapsed, events, matchMemo, playerMemos]);
 
+  // 今の試合データをアーカイブ(過去の試合一覧)に追加保存する
+  function archiveCurrentMatch() {
+    const hasData = events.length > 0 || score.us > 0 || score.them > 0;
+    if (!hasData) return;
+    const record = {
+      id: `m_${Date.now()}`,
+      savedAt: new Date().toISOString(),
+      matchInfo, roster, teamNames, pairs, score, elapsed, events, matchMemo, playerMemos,
+    };
+    setArchive((arc) => {
+      const next = [record, ...arc];
+      try {
+        localStorage.setItem(ARCHIVE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }
+
+  function deleteArchivedMatch(id) {
+    setArchive((arc) => {
+      const next = arc.filter((m) => m.id !== id);
+      try {
+        localStorage.setItem(ARCHIVE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }
+
+  function loadArchivedMatch(record) {
+    setMatchInfo(record.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoLeadSec: 5 });
+    setRoster(record.roster ?? INITIAL);
+    setTeamNames(record.teamNames ?? DEFAULT_TEAM_NAMES);
+    setPairs(record.pairs ?? PAIRS_INITIAL);
+    setScore(record.score ?? { us: 0, them: 0 });
+    setElapsed(record.elapsed ?? 0);
+    setEvents(record.events ?? []);
+    setMatchMemo(record.matchMemo ?? "");
+    setPlayerMemos(record.playerMemos ?? {});
+    setHistory([]);
+    setStep("dashboard");
+  }
+
   function clearSavedMatch() {
+    archiveCurrentMatch(); // 新しい試合を始める前に、今の試合を自動でアーカイブに残す
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -194,6 +253,49 @@ export default function HandballLiveInput() {
     setMatchMemo("");
     setPlayerMemos({});
     setHistory([]);
+  }
+
+  // 試合データをJSONファイルとして書き出す(他の端末・他の人と共有するため)
+  function exportMatchData() {
+    const data = { matchInfo, roster, teamNames, pairs, score, elapsed, events, matchMemo, playerMemos, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const dateStr = (matchInfo.date || "no-date").replaceAll("-", "");
+    const safeUs = (teamNames.us || "us").replace(/[^\w\u3040-\u30FF\u4E00-\u9FFF]/g, "");
+    const safeThem = (teamNames.them || "them").replace(/[^\w\u3040-\u30FF\u4E00-\u9FFF]/g, "");
+    a.href = url;
+    a.download = `courteye_${dateStr}_${safeUs}vs${safeThem}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("データを書き出しました");
+  }
+
+  // 書き出したJSONファイルを読み込んで、その試合データを復元する
+  function importMatchData(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        setMatchInfo(data.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoLeadSec: 5 });
+        setRoster(data.roster ?? INITIAL);
+        setTeamNames(data.teamNames ?? DEFAULT_TEAM_NAMES);
+        setPairs(data.pairs ?? PAIRS_INITIAL);
+        setScore(data.score ?? { us: 0, them: 0 });
+        setElapsed(data.elapsed ?? 0);
+        setEvents(data.events ?? []);
+        setMatchMemo(data.matchMemo ?? "");
+        setPlayerMemos(data.playerMemos ?? {});
+        setHistory([]);
+        showToast("データを読み込みました");
+        setStep("dashboard");
+      } catch {
+        window.alert("ファイルの読み込みに失敗しました。正しいCourtEyeのデータファイル(.json)か確認してください。");
+      }
+    };
+    reader.readAsText(file);
   }
 
   useEffect(() => {
@@ -544,9 +646,48 @@ export default function HandballLiveInput() {
           )}
         </div>
 
-        <div className="px-4 pt-2">
+        <div className="px-4 pt-2 space-y-2">
           <div className="text-[10px] rounded-lg px-3 py-2" style={{ background: COLORS.surfaceLight, color: COLORS.muted }}>
             💾 入力したデータはこの端末に自動保存されます。ページを閉じても消えません。
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setStep("archive")}
+              className="flex-1 flex items-center justify-center gap-1 text-xs font-display font-semibold py-2 rounded-lg"
+              style={{ background: COLORS.gold, color: COLORS.bg }}
+            >
+              <List size={13} /> 試合一覧を見る({archive.length})
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={exportMatchData}
+              className="flex-1 flex items-center justify-center gap-1 text-xs font-display font-semibold py-2 rounded-lg"
+              style={{ background: COLORS.surfaceLight, color: COLORS.gold, border: `1px solid ${COLORS.line}` }}
+            >
+              <Download size={13} /> データを書き出す
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex-1 flex items-center justify-center gap-1 text-xs font-display font-semibold py-2 rounded-lg"
+              style={{ background: COLORS.surfaceLight, color: COLORS.teal, border: `1px solid ${COLORS.line}` }}
+            >
+              <Upload size={13} /> データを読み込む
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) importMatchData(file);
+                e.target.value = "";
+              }}
+            />
+          </div>
+          <div className="text-[9px] px-1" style={{ color: COLORS.muted }}>
+            「書き出す」で試合データをファイル(.json)として保存でき、他の人にLINE等で送って「読み込む」で共有できます。試合ごとにファイルを残しておけば、複数試合のアーカイブとしても使えます。
           </div>
         </div>
 
@@ -688,6 +829,90 @@ export default function HandballLiveInput() {
           >
             試合開始 <ArrowRight size={16} />
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "archive") {
+    const wins = archive.filter((m) => m.score.us > m.score.them).length;
+    const draws = archive.filter((m) => m.score.us === m.score.them).length;
+    const losses = archive.filter((m) => m.score.us < m.score.them).length;
+
+    return (
+      <div className="font-body min-h-screen w-full flex flex-col" style={{ background: COLORS.bg, color: COLORS.text }}>
+        <style>{FONT_STYLE}</style>
+
+        <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
+          <div>
+            <div className="font-display font-bold text-2xl">試合一覧</div>
+            <div className="text-xs mt-1" style={{ color: COLORS.muted }}>この端末に保存されている過去の試合</div>
+          </div>
+          <button onClick={() => setStep("setup")} className="text-xs underline flex-shrink-0" style={{ color: COLORS.muted }}>
+            試合設定に戻る
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {archive.length > 0 && (
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                ["試合数", archive.length],
+                ["勝", wins],
+                ["分", draws],
+                ["敗", losses],
+              ].map(([label, val]) => (
+                <div key={label} className="rounded-lg p-2 text-center" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+                  <div className="font-mono font-bold text-lg" style={{ color: COLORS.gold }}>{val}</div>
+                  <div className="text-[9px]" style={{ color: COLORS.muted }}>{label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {archive.length === 0 ? (
+            <div className="rounded-lg p-6 text-center" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+              <div className="text-sm" style={{ color: COLORS.muted }}>
+                まだ保存された試合がありません。「新しい試合を始める」を押すと、今の試合が自動でここに追加されます。
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {archive.map((m) => {
+                const result = m.score.us > m.score.them ? "win" : m.score.us < m.score.them ? "lose" : "draw";
+                return (
+                  <div key={m.id} className="rounded-lg p-3 flex items-center justify-between" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+                    <button onClick={() => loadArchivedMatch(m)} className="flex-1 text-left">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span
+                          className="text-[9px] font-display font-bold px-1.5 py-0.5 rounded"
+                          style={{
+                            background: result === "win" ? COLORS.teal : result === "lose" ? COLORS.coral : COLORS.surfaceLight,
+                            color: result === "draw" ? COLORS.muted : COLORS.bg,
+                          }}
+                        >
+                          {result === "win" ? "勝" : result === "lose" ? "敗" : "分"}
+                        </span>
+                        <span className="text-[10px]" style={{ color: COLORS.muted }}>
+                          {m.matchInfo?.date || "日付未設定"} {m.matchInfo?.venue && `・ ${m.matchInfo.venue}`}
+                        </span>
+                      </div>
+                      <div className="font-display font-semibold text-sm">
+                        {m.teamNames?.us} <span style={{ color: COLORS.gold }}>{m.score.us} - {m.score.them}</span> {m.teamNames?.them}
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { if (window.confirm("この試合データを削除しますか?")) deleteArchivedMatch(m.id); }}
+                      className="flex-shrink-0 ml-2 p-2"
+                      style={{ color: COLORS.coral }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     );
