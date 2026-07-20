@@ -144,6 +144,7 @@ export default function HandballLiveInput() {
   const saved = loadSaved();
   const [step, setStep] = useState(saved?.step ?? "setup"); // setup | live | dashboard | archive
   const [archive, setArchive] = useState(() => loadArchive());
+  const [scoutingOpponent, setScoutingOpponent] = useState(null);
   const [dashboardTab, setDashboardTab] = useState("summary"); // summary | players | timeline
   const [dashboardTeamView, setDashboardTeamView] = useState("us");
   const [playerDetailOpen, setPlayerDetailOpen] = useState(null); // { team, num, name }
@@ -151,7 +152,7 @@ export default function HandballLiveInput() {
   const [matchMemo, setMatchMemo] = useState(saved?.matchMemo ?? "");
   const [playerMemos, setPlayerMemos] = useState(saved?.playerMemos ?? {}); // { "us_9": "メモ..." }
   const [kpiSituationDrill, setKpiSituationDrill] = useState(null); // 選択中の場面(ドリルダウン先)
-  const [matchInfo, setMatchInfo] = useState(saved?.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoLeadSec: 5 });
+  const [matchInfo, setMatchInfo] = useState(saved?.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoOffset2: 0, halfBoundarySec: 1800, videoLeadSec: 5 });
   const [videoSeekSec, setVideoSeekSec] = useState(0);
   const [videoSeekKey, setVideoSeekKey] = useState(0);
   const [roster, setRoster] = useState(saved?.roster ?? INITIAL);
@@ -174,6 +175,9 @@ export default function HandballLiveInput() {
   const [newPairB, setNewPairB] = useState("");
   const [toast, setToast] = useState("");
   const [showOnlyMarked, setShowOnlyMarked] = useState(false);
+  const [timeEditOpen, setTimeEditOpen] = useState(false);
+  const [timeEditMin, setTimeEditMin] = useState("0");
+  const [timeEditSec, setTimeEditSec] = useState("0");
   const toastTimer = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -222,7 +226,7 @@ export default function HandballLiveInput() {
   }
 
   function loadArchivedMatch(record) {
-    setMatchInfo(record.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoLeadSec: 5 });
+    setMatchInfo(record.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoOffset2: 0, halfBoundarySec: 1800, videoLeadSec: 5 });
     setRoster(record.roster ?? INITIAL);
     setTeamNames(record.teamNames ?? DEFAULT_TEAM_NAMES);
     setPairs(record.pairs ?? PAIRS_INITIAL);
@@ -243,7 +247,7 @@ export default function HandballLiveInput() {
       // ignore
     }
     setStep("setup");
-    setMatchInfo({ date: "", venue: "", videoUrl: "", videoOffset: 0, videoLeadSec: 5 });
+    setMatchInfo({ date: "", venue: "", videoUrl: "", videoOffset: 0, videoOffset2: 0, halfBoundarySec: 1800, videoLeadSec: 5 });
     setRoster(INITIAL);
     setTeamNames(DEFAULT_TEAM_NAMES);
     setPairs(PAIRS_INITIAL);
@@ -279,7 +283,7 @@ export default function HandballLiveInput() {
     reader.onload = (e) => {
       try {
         const data = JSON.parse(e.target.result);
-        setMatchInfo(data.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoLeadSec: 5 });
+        setMatchInfo(data.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoOffset2: 0, halfBoundarySec: 1800, videoLeadSec: 5 });
         setRoster(data.roster ?? INITIAL);
         setTeamNames(data.teamNames ?? DEFAULT_TEAM_NAMES);
         setPairs(data.pairs ?? PAIRS_INITIAL);
@@ -308,7 +312,7 @@ export default function HandballLiveInput() {
   // (背景がスクロールした状態のまま fixed オーバーレイを開くと、上部が見切れて操作できなくなることがあるための対策)
   useEffect(() => {
     const anyModalOpen =
-      !!selected || subPicking || shotDetailOpen || situationOpen || turnoverDetailOpen || pairEditOpen || !!playerDetailOpen || !!kpiDetailOpen;
+      !!selected || subPicking || shotDetailOpen || situationOpen || turnoverDetailOpen || pairEditOpen || !!playerDetailOpen || !!kpiDetailOpen || timeEditOpen;
     if (anyModalOpen) {
       window.scrollTo(0, 0);
       document.body.style.overflow = "hidden";
@@ -318,7 +322,7 @@ export default function HandballLiveInput() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [selected, subPicking, shotDetailOpen, situationOpen, turnoverDetailOpen, pairEditOpen, playerDetailOpen, kpiDetailOpen]);
+  }, [selected, subPicking, shotDetailOpen, situationOpen, turnoverDetailOpen, pairEditOpen, playerDetailOpen, kpiDetailOpen, timeEditOpen]);
 
   const statsByTeam = useMemo(() => {
     const base = () => ({ made: 0, attempts: 0, turnovers: 0, twoMin: 0, warnings: 0, savedByGK: 0, concededGoals: 0 });
@@ -464,8 +468,11 @@ export default function HandballLiveInput() {
   const videoId = parseYouTubeId(matchInfo.videoUrl);
 
   function jumpToVideo(ts) {
+    const boundary = Number(matchInfo.halfBoundarySec) || 0;
+    const isSecondHalf = boundary > 0 && ts >= boundary;
+    const offset = isSecondHalf ? (Number(matchInfo.videoOffset2) || 0) : (Number(matchInfo.videoOffset) || 0);
     const lead = Number(matchInfo.videoLeadSec) || 0;
-    const sec = Math.max(0, Math.floor(ts + (Number(matchInfo.videoOffset) || 0) - lead));
+    const sec = Math.max(0, Math.floor(ts + offset - lead));
     setVideoSeekSec(sec);
     setVideoSeekKey((k) => k + 1);
     setDashboardTab("video");
@@ -473,6 +480,25 @@ export default function HandballLiveInput() {
 
   function toggleMark(id) {
     setEvents((ev) => ev.map((e) => (e.id === id ? { ...e, marked: !e.marked } : e)));
+  }
+
+  function adjustElapsed(deltaSec) {
+    setElapsed((e) => Math.max(0, e + deltaSec));
+    showToast(`${deltaSec > 0 ? "+" : ""}${deltaSec}秒 調整しました`);
+  }
+
+  function openTimeEdit() {
+    setTimeEditMin(String(Math.floor(elapsed / 60)));
+    setTimeEditSec(String(elapsed % 60));
+    setTimeEditOpen(true);
+  }
+
+  function applyTimeEdit() {
+    const m = Math.max(0, Number(timeEditMin) || 0);
+    const s = Math.max(0, Math.min(59, Number(timeEditSec) || 0));
+    setElapsed(m * 60 + s);
+    setTimeEditOpen(false);
+    showToast("試合時間を設定しました");
   }
 
   function showToast(msg) {
@@ -729,7 +755,7 @@ export default function HandballLiveInput() {
               style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
             />
             <div className="flex items-center gap-2">
-              <span className="text-xs" style={{ color: COLORS.muted }}>動画開始のズレ(秒)</span>
+              <span className="text-xs" style={{ color: COLORS.muted }}>前半開始のズレ(秒)</span>
               <input
                 type="number"
                 value={matchInfo.videoOffset}
@@ -739,7 +765,33 @@ export default function HandballLiveInput() {
               />
             </div>
             <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
-              動画の試合開始タイミングが試合クロックとズレている場合、秒数で調整できます(例:動画で30秒後にスローオフなら「30」)
+              動画の前半スローオフのタイミングが試合クロックとズレている場合、秒数で調整できます(例:動画で30秒後にスローオフなら「30」)
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs" style={{ color: COLORS.muted }}>後半開始のズレ(秒)</span>
+              <input
+                type="number"
+                value={matchInfo.videoOffset2}
+                onChange={(e) => setMatchInfo((m) => ({ ...m, videoOffset2: e.target.value }))}
+                className="w-20 rounded-md px-2 py-1 text-sm"
+                style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
+              />
+            </div>
+            <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
+              ハーフタイムの休憩中も動画を止めずに撮り続けている場合、前半と後半でズレが変わります。後半のスローオフが動画の何秒地点かを入れてください。
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs" style={{ color: COLORS.muted }}>前半は何秒で終わったか(試合クロック)</span>
+              <input
+                type="number"
+                value={matchInfo.halfBoundarySec}
+                onChange={(e) => setMatchInfo((m) => ({ ...m, halfBoundarySec: e.target.value }))}
+                className="w-20 rounded-md px-2 py-1 text-sm"
+                style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
+              />
+            </div>
+            <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
+              この秒数(試合クロック)より後のイベントは「後半開始のズレ」を使ってジャンプします。標準は30分=1800秒です。
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs" style={{ color: COLORS.muted }}>ジャンプ時に何秒前から再生するか</span>
@@ -848,9 +900,14 @@ export default function HandballLiveInput() {
             <div className="font-display font-bold text-2xl">試合一覧</div>
             <div className="text-xs mt-1" style={{ color: COLORS.muted }}>この端末に保存されている過去の試合</div>
           </div>
-          <button onClick={() => setStep("setup")} className="text-xs underline flex-shrink-0" style={{ color: COLORS.muted }}>
-            試合設定に戻る
-          </button>
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <button onClick={() => { setScoutingOpponent(null); setStep("scouting"); }} className="text-xs font-display font-semibold px-2 py-1 rounded" style={{ background: COLORS.gold, color: COLORS.bg }}>
+              スカウティング
+            </button>
+            <button onClick={() => setStep("setup")} className="text-xs underline" style={{ color: COLORS.muted }}>
+              試合設定に戻る
+            </button>
+          </div>
         </div>
 
         <div className="p-4 space-y-4">
@@ -913,6 +970,234 @@ export default function HandballLiveInput() {
               })}
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "scouting") {
+    const opponentGroups = {};
+    for (const m of archive) {
+      const name = m.teamNames?.them;
+      if (!name) continue;
+      if (!opponentGroups[name]) opponentGroups[name] = [];
+      opponentGroups[name].push(m);
+    }
+    const opponentNames = Object.keys(opponentGroups).sort((a, b) => opponentGroups[b].length - opponentGroups[a].length);
+
+    if (!scoutingOpponent) {
+      return (
+        <div className="font-body min-h-screen w-full flex flex-col" style={{ background: COLORS.bg, color: COLORS.text }}>
+          <style>{FONT_STYLE}</style>
+          <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
+            <div>
+              <div className="font-display font-bold text-2xl">スカウティング</div>
+              <div className="text-xs mt-1" style={{ color: COLORS.muted }}>対戦したことのある相手を選んでください</div>
+            </div>
+            <button onClick={() => setStep("archive")} className="text-xs underline flex-shrink-0" style={{ color: COLORS.muted }}>
+              試合一覧に戻る
+            </button>
+          </div>
+          <div className="p-4 space-y-2">
+            {opponentNames.length === 0 && (
+              <div className="rounded-lg p-6 text-center" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+                <div className="text-sm" style={{ color: COLORS.muted }}>まだアーカイブされた試合がありません。試合を終えて「新しい試合を始める」を押すと、ここに相手が表示されるようになります。</div>
+              </div>
+            )}
+            {opponentNames.map((name) => (
+              <button
+                key={name}
+                onClick={() => setScoutingOpponent(name)}
+                className="w-full rounded-lg p-3 flex items-center justify-between"
+                style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}
+              >
+                <span className="font-display font-semibold text-sm">{name}</span>
+                <span className="text-xs" style={{ color: COLORS.muted }}>{opponentGroups[name].length}試合</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // --- 選択した相手チームのデータを横断集計 ---
+    const matches = opponentGroups[scoutingOpponent] || [];
+    const wins = matches.filter((m) => m.score.us > m.score.them).length;
+    const draws = matches.filter((m) => m.score.us === m.score.them).length;
+    const losses = matches.filter((m) => m.score.us < m.score.them).length;
+    const avgUs = matches.length ? (matches.reduce((s, m) => s + m.score.us, 0) / matches.length).toFixed(1) : "-";
+    const avgThem = matches.length ? (matches.reduce((s, m) => s + m.score.them, 0) / matches.length).toFixed(1) : "-";
+
+    const allShots = matches.flatMap((m) =>
+      (m.events || []).filter((e) => e.team === "them" && e.cat === "shot").map((e) => ({ ...e, _match: m }))
+    );
+    const totalMade = allShots.filter((e) => e.type === "goal").length;
+    const overallShotPct = allShots.length ? Math.round((totalMade / allShots.length) * 100) : null;
+
+    function groupBy(arr, keyFn) {
+      const map = {};
+      for (const item of arr) {
+        const k = keyFn(item);
+        if (!k) continue;
+        if (!map[k]) map[k] = [];
+        map[k].push(item);
+      }
+      return map;
+    }
+
+    const byLocation = groupBy(allShots, (e) => e.location);
+    const locationRows = Object.entries(byLocation)
+      .map(([loc, arr]) => ({
+        loc,
+        attempts: arr.length,
+        made: arr.filter((e) => e.type === "goal").length,
+        saved: arr.filter((e) => e.type === "saved").length,
+      }))
+      .map((r) => ({ ...r, shotPct: Math.round((r.made / r.attempts) * 100), savePct: (r.made + r.saved) ? Math.round((r.saved / (r.made + r.saved)) * 100) : null }))
+      .sort((a, b) => b.attempts - a.attempts);
+
+    const byShotType = groupBy(allShots, (e) => e.shotType);
+    const shotTypeRows = Object.entries(byShotType)
+      .map(([type, arr]) => ({ type, attempts: arr.length, made: arr.filter((e) => e.type === "goal").length }))
+      .map((r) => ({ ...r, pct: Math.round((r.made / r.attempts) * 100) }))
+      .sort((a, b) => b.attempts - a.attempts);
+
+    const byPosition = groupBy(allShots, (e) => {
+      const p = e._match.roster?.them?.find((pl) => pl.num === e.playerNum);
+      return p?.pos || null;
+    });
+    const positionRows = Object.entries(byPosition)
+      .map(([pos, arr]) => ({
+        pos,
+        attempts: arr.length,
+        made: arr.filter((e) => e.type === "goal").length,
+        saved: arr.filter((e) => e.type === "saved").length,
+      }))
+      .map((r) => ({ ...r, shotPct: Math.round((r.made / r.attempts) * 100), savePct: (r.made + r.saved) ? Math.round((r.saved / (r.made + r.saved)) * 100) : null }))
+      .sort((a, b) => b.made - a.made);
+
+    const byPlayer = groupBy(allShots, (e) => e.playerName ? `${e.playerName}` : (e.playerNum != null ? `#${e.playerNum}` : null));
+    const playerRows = Object.entries(byPlayer)
+      .map(([name, arr]) => ({
+        name,
+        num: arr[0]?.playerNum,
+        matchesPlayed: new Set(arr.map((e) => e._match.id)).size,
+        attempts: arr.length,
+        made: arr.filter((e) => e.type === "goal").length,
+      }))
+      .map((r) => ({ ...r, pct: Math.round((r.made / r.attempts) * 100) }))
+      .sort((a, b) => b.made - a.made)
+      .slice(0, 6);
+
+    return (
+      <div className="font-body min-h-screen w-full flex flex-col" style={{ background: COLORS.bg, color: COLORS.text }}>
+        <style>{FONT_STYLE}</style>
+        <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
+          <div>
+            <div className="font-display font-bold text-xl">{scoutingOpponent}</div>
+            <div className="text-xs mt-1" style={{ color: COLORS.muted }}>過去{matches.length}試合分のスカウティングレポート</div>
+          </div>
+          <button onClick={() => setScoutingOpponent(null)} className="text-xs underline flex-shrink-0" style={{ color: COLORS.muted }}>
+            相手を選び直す
+          </button>
+        </div>
+
+        <div className="p-4 space-y-5">
+          {/* 対戦成績 */}
+          <div className="grid grid-cols-5 gap-2">
+            {[
+              ["試合数", matches.length],
+              ["勝", wins],
+              ["分", draws],
+              ["敗", losses],
+              ["平均得失点", `${avgUs}-${avgThem}`],
+            ].map(([label, val]) => (
+              <div key={label} className="rounded-lg p-2 text-center" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+                <div className="font-mono font-bold text-sm" style={{ color: COLORS.gold }}>{val}</div>
+                <div className="text-[8px]" style={{ color: COLORS.muted }}>{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* シュート傾向 */}
+          <div>
+            <div className="font-display font-bold text-sm mb-2" style={{ color: COLORS.gold }}>
+              シュート傾向(全体成功率 {overallShotPct !== null ? `${overallShotPct}%` : "—"} / {totalMade}-{allShots.length})
+            </div>
+            <div className="rounded-lg p-3 mb-2" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+              <div className="text-[10px] uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>よく打つ場所(打った場所別)</div>
+              <div className="space-y-1.5">
+                {locationRows.length === 0 && <div className="text-xs" style={{ color: COLORS.muted }}>データがありません</div>}
+                {locationRows.slice(0, 6).map((r) => (
+                  <div key={r.loc} className="flex items-center justify-between text-xs">
+                    <span>{r.loc}</span>
+                    <span className="font-mono" style={{ color: COLORS.muted }}>{r.made}/{r.attempts}本 ({r.shotPct}%)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-lg p-3" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+              <div className="text-[10px] uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>シュートの種類別</div>
+              <div className="space-y-1.5">
+                {shotTypeRows.length === 0 && <div className="text-xs" style={{ color: COLORS.muted }}>データがありません</div>}
+                {shotTypeRows.map((r) => (
+                  <div key={r.type} className="flex items-center justify-between text-xs">
+                    <span>{r.type}</span>
+                    <span className="font-mono" style={{ color: COLORS.muted }}>{r.made}/{r.attempts}本 ({r.pct}%)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* 失点傾向 */}
+          <div>
+            <div className="font-display font-bold text-sm mb-2" style={{ color: COLORS.coral }}>失点傾向(この相手に対する自チームの守備)</div>
+            <div className="rounded-lg p-3 mb-2" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+              <div className="text-[10px] uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>場所別のセーブ率(自チームGK)</div>
+              <div className="space-y-1.5">
+                {locationRows.length === 0 && <div className="text-xs" style={{ color: COLORS.muted }}>データがありません</div>}
+                {locationRows.map((r) => (
+                  <div key={r.loc} className="flex items-center justify-between text-xs">
+                    <span>{r.loc}</span>
+                    <span className="font-mono" style={{ color: r.savePct !== null && r.savePct < 40 ? COLORS.coral : COLORS.muted }}>
+                      {r.savePct !== null ? `セーブ率 ${r.savePct}%` : "—"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-lg p-3" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+              <div className="text-[10px] uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>ポジション別(相手のどのポジションに決められているか)</div>
+              <div className="space-y-1.5">
+                {positionRows.length === 0 && <div className="text-xs" style={{ color: COLORS.muted }}>データがありません(相手ロスターにポジションが未設定の可能性があります)</div>}
+                {positionRows.map((r) => (
+                  <div key={r.pos} className="flex items-center justify-between text-xs">
+                    <span>{r.pos}</span>
+                    <span className="font-mono" style={{ color: COLORS.muted }}>被{r.made}点 ({r.attempts}本中) セーブ率{r.savePct !== null ? `${r.savePct}%` : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* 要注意選手 */}
+          <div>
+            <div className="font-display font-bold text-sm mb-2" style={{ color: COLORS.gold }}>要注意選手</div>
+            <div className="rounded-lg overflow-hidden" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+              {playerRows.length === 0 && <div className="text-xs p-3" style={{ color: COLORS.muted }}>データがありません</div>}
+              {playerRows.map((p, i) => (
+                <div key={p.name} className="flex items-center justify-between px-3 py-2" style={{ borderTop: i > 0 ? `1px solid ${COLORS.line}` : "none" }}>
+                  <div>
+                    <span className="font-display font-bold text-sm" style={{ color: COLORS.gold }}>{i + 1}.</span>{" "}
+                    <span className="text-sm">{p.name}</span>
+                    <span className="text-[10px] ml-2" style={{ color: COLORS.muted }}>({p.matchesPlayed}試合出現)</span>
+                  </div>
+                  <span className="font-mono text-xs" style={{ color: COLORS.muted }}>{p.made}得点 ({p.made}/{p.attempts}, {p.pct}%)</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1173,7 +1458,7 @@ export default function HandballLiveInput() {
                     />
                   </div>
                   <div className="text-xs" style={{ color: COLORS.muted }}>
-                    現在の再生位置: {fmt(videoSeekSec)}(試合クロック {fmt(Math.max(0, videoSeekSec - (Number(matchInfo.videoOffset) || 0)))} に対応)
+                    現在の再生位置: {fmt(videoSeekSec)}
                   </div>
                   <div className="flex items-center gap-2 text-xs" style={{ color: COLORS.muted }}>
                     <span>頭出し(何秒前から再生):</span>
@@ -1654,7 +1939,7 @@ export default function HandballLiveInput() {
             <div className="font-display font-bold text-5xl leading-none" style={{ color: COLORS.gold }}>{score.us}</div>
           </div>
           <div className="flex flex-col items-center px-3">
-            <div className="font-mono text-2xl">{fmt(elapsed)}</div>
+            <button onClick={openTimeEdit} className="font-mono text-2xl underline decoration-dotted">{fmt(elapsed)}</button>
             <button onClick={() => setRunning((r) => !r)} className="mt-1 rounded-full p-2" style={{ background: running ? COLORS.coral : COLORS.teal }}>
               {running ? <Pause size={16} color="#10161d" /> : <Play size={16} color="#10161d" />}
             </button>
@@ -1898,6 +2183,68 @@ export default function HandballLiveInput() {
               <button onClick={() => setSubPicking(true)} className="rounded-lg py-3 font-display font-semibold text-sm col-span-2" style={{ background: COLORS.gold, color: COLORS.bg }}>
                 交代する
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Time edit sheet */}
+      {timeEditOpen && (
+        <div className="fixed inset-0 z-30 flex items-end" onClick={() => setTimeEditOpen(false)}>
+          <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.55)" }} />
+          <div
+            className="relative w-full rounded-t-2xl p-4 pb-6 z-10"
+            style={{ background: COLORS.surface, borderTop: `1px solid ${COLORS.line}` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-display font-bold text-lg">試合時間を修正</div>
+              <button onClick={() => setTimeEditOpen(false)}><X size={20} /></button>
+            </div>
+
+            <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>クイック調整</div>
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {[-60, -30, -10, 10, 30, 60].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => adjustElapsed(d)}
+                  className="rounded-lg py-2.5 text-sm font-display font-semibold"
+                  style={{ background: COLORS.surfaceLight, color: d < 0 ? COLORS.coral : COLORS.teal, border: `1px solid ${COLORS.line}` }}
+                >
+                  {d > 0 ? `+${d}秒` : `${d}秒`}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>時間を直接指定</div>
+            <div className="flex items-center gap-2 mb-4">
+              <input
+                type="number"
+                value={timeEditMin}
+                onChange={(e) => setTimeEditMin(e.target.value)}
+                className="w-20 rounded-md px-2 py-2 text-center font-mono text-lg"
+                style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
+              />
+              <span className="text-sm" style={{ color: COLORS.muted }}>分</span>
+              <input
+                type="number"
+                value={timeEditSec}
+                onChange={(e) => setTimeEditSec(e.target.value)}
+                className="w-20 rounded-md px-2 py-2 text-center font-mono text-lg"
+                style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
+              />
+              <span className="text-sm" style={{ color: COLORS.muted }}>秒</span>
+            </div>
+
+            <button
+              onClick={applyTimeEdit}
+              className="w-full rounded-lg py-3 font-display font-bold text-base"
+              style={{ background: COLORS.gold, color: COLORS.bg }}
+            >
+              この時間に設定する
+            </button>
+            <div className="text-[10px] mt-2" style={{ color: COLORS.muted }}>
+              ※ 時間を変更しても、すでに記録したイベントの時刻は変わりません。今から先の記録に影響します。
             </div>
           </div>
         </div>
