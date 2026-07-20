@@ -108,6 +108,16 @@ function parseYouTubeId(url) {
   return "";
 }
 
+// "1:23:45" や "32:10" のような時間表記を秒数に変換する
+function parseTimeToSeconds(str) {
+  if (!str) return 0;
+  const parts = String(str).split(":").map((s) => Number(s.trim()));
+  if (parts.some((n) => isNaN(n))) return 0;
+  let sec = 0;
+  for (const p of parts) sec = sec * 60 + p;
+  return Math.max(0, sec);
+}
+
 function fmt(sec) {
   const m = Math.floor(sec / 60).toString().padStart(2, "0");
   const s = Math.floor(sec % 60).toString().padStart(2, "0");
@@ -152,7 +162,7 @@ export default function HandballLiveInput() {
   const [matchMemo, setMatchMemo] = useState(saved?.matchMemo ?? "");
   const [playerMemos, setPlayerMemos] = useState(saved?.playerMemos ?? {}); // { "us_9": "メモ..." }
   const [kpiSituationDrill, setKpiSituationDrill] = useState(null); // 選択中の場面(ドリルダウン先)
-  const [matchInfo, setMatchInfo] = useState(saved?.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoOffset2: 0, halfBoundarySec: 1800, videoLeadSec: 5 });
+  const [matchInfo, setMatchInfo] = useState(saved?.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffsetText: "0:00", videoOffset2Text: "0:00", halfBoundaryText: "30:00", videoLeadSec: 5 });
   const [videoSeekSec, setVideoSeekSec] = useState(0);
   const [videoSeekKey, setVideoSeekKey] = useState(0);
   const [roster, setRoster] = useState(saved?.roster ?? INITIAL);
@@ -226,7 +236,7 @@ export default function HandballLiveInput() {
   }
 
   function loadArchivedMatch(record) {
-    setMatchInfo(record.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoOffset2: 0, halfBoundarySec: 1800, videoLeadSec: 5 });
+    setMatchInfo(record.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffsetText: "0:00", videoOffset2Text: "0:00", halfBoundaryText: "30:00", videoLeadSec: 5 });
     setRoster(record.roster ?? INITIAL);
     setTeamNames(record.teamNames ?? DEFAULT_TEAM_NAMES);
     setPairs(record.pairs ?? PAIRS_INITIAL);
@@ -247,7 +257,7 @@ export default function HandballLiveInput() {
       // ignore
     }
     setStep("setup");
-    setMatchInfo({ date: "", venue: "", videoUrl: "", videoOffset: 0, videoOffset2: 0, halfBoundarySec: 1800, videoLeadSec: 5 });
+    setMatchInfo({ date: "", venue: "", videoUrl: "", videoOffsetText: "0:00", videoOffset2Text: "0:00", halfBoundaryText: "30:00", videoLeadSec: 5 });
     setRoster(INITIAL);
     setTeamNames(DEFAULT_TEAM_NAMES);
     setPairs(PAIRS_INITIAL);
@@ -283,7 +293,7 @@ export default function HandballLiveInput() {
     reader.onload = (e) => {
       try {
         const data = JSON.parse(e.target.result);
-        setMatchInfo(data.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffset: 0, videoOffset2: 0, halfBoundarySec: 1800, videoLeadSec: 5 });
+        setMatchInfo(data.matchInfo ?? { date: "", venue: "", videoUrl: "", videoOffsetText: "0:00", videoOffset2Text: "0:00", halfBoundaryText: "30:00", videoLeadSec: 5 });
         setRoster(data.roster ?? INITIAL);
         setTeamNames(data.teamNames ?? DEFAULT_TEAM_NAMES);
         setPairs(data.pairs ?? PAIRS_INITIAL);
@@ -468,9 +478,9 @@ export default function HandballLiveInput() {
   const videoId = parseYouTubeId(matchInfo.videoUrl);
 
   function jumpToVideo(ts) {
-    const boundary = Number(matchInfo.halfBoundarySec) || 0;
+    const boundary = parseTimeToSeconds(matchInfo.halfBoundaryText);
     const isSecondHalf = boundary > 0 && ts >= boundary;
-    const offset = isSecondHalf ? (Number(matchInfo.videoOffset2) || 0) : (Number(matchInfo.videoOffset) || 0);
+    const offset = isSecondHalf ? parseTimeToSeconds(matchInfo.videoOffset2Text) : parseTimeToSeconds(matchInfo.videoOffsetText);
     const lead = Number(matchInfo.videoLeadSec) || 0;
     const sec = Math.max(0, Math.floor(ts + offset - lead));
     setVideoSeekSec(sec);
@@ -755,43 +765,49 @@ export default function HandballLiveInput() {
               style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
             />
             <div className="flex items-center gap-2">
-              <span className="text-xs" style={{ color: COLORS.muted }}>前半開始のズレ(秒)</span>
+              <span className="text-xs" style={{ color: COLORS.muted }}>前半スローオフの動画内時間</span>
               <input
-                type="number"
-                value={matchInfo.videoOffset}
-                onChange={(e) => setMatchInfo((m) => ({ ...m, videoOffset: e.target.value }))}
-                className="w-20 rounded-md px-2 py-1 text-sm"
+                type="text"
+                inputMode="numeric"
+                placeholder="0:30"
+                value={matchInfo.videoOffsetText}
+                onChange={(e) => setMatchInfo((m) => ({ ...m, videoOffsetText: e.target.value }))}
+                className="w-24 rounded-md px-2 py-1 text-sm font-mono"
                 style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
               />
             </div>
             <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
-              動画の前半スローオフのタイミングが試合クロックとズレている場合、秒数で調整できます(例:動画で30秒後にスローオフなら「30」)
+              動画を見て、前半のスローオフの瞬間が動画の何分何秒かを「分:秒」で入力してください(例:0:30、1:05:20 のように時:分:秒でもOK)
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs" style={{ color: COLORS.muted }}>後半開始のズレ(秒)</span>
+              <span className="text-xs" style={{ color: COLORS.muted }}>後半スローオフの動画内時間</span>
               <input
-                type="number"
-                value={matchInfo.videoOffset2}
-                onChange={(e) => setMatchInfo((m) => ({ ...m, videoOffset2: e.target.value }))}
-                className="w-20 rounded-md px-2 py-1 text-sm"
+                type="text"
+                inputMode="numeric"
+                placeholder="32:10"
+                value={matchInfo.videoOffset2Text}
+                onChange={(e) => setMatchInfo((m) => ({ ...m, videoOffset2Text: e.target.value }))}
+                className="w-24 rounded-md px-2 py-1 text-sm font-mono"
                 style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
               />
             </div>
             <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
-              ハーフタイムの休憩中も動画を止めずに撮り続けている場合、前半と後半でズレが変わります。後半のスローオフが動画の何秒地点かを入れてください。
+              ハーフタイムの休憩中も動画を止めずに撮り続けている場合、前半と後半でズレが変わります。動画を見て、後半のスローオフが何分何秒かを入れてください。
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs" style={{ color: COLORS.muted }}>前半は何秒で終わったか(試合クロック)</span>
+              <span className="text-xs" style={{ color: COLORS.muted }}>前半終了時点(試合クロック)</span>
               <input
-                type="number"
-                value={matchInfo.halfBoundarySec}
-                onChange={(e) => setMatchInfo((m) => ({ ...m, halfBoundarySec: e.target.value }))}
-                className="w-20 rounded-md px-2 py-1 text-sm"
+                type="text"
+                inputMode="numeric"
+                placeholder="30:00"
+                value={matchInfo.halfBoundaryText}
+                onChange={(e) => setMatchInfo((m) => ({ ...m, halfBoundaryText: e.target.value }))}
+                className="w-24 rounded-md px-2 py-1 text-sm font-mono"
                 style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
               />
             </div>
             <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
-              この秒数(試合クロック)より後のイベントは「後半開始のズレ」を使ってジャンプします。標準は30分=1800秒です。
+              この試合クロックの時間より後のイベントは「後半スローオフの動画内時間」を使ってジャンプします。標準は30:00です。
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs" style={{ color: COLORS.muted }}>ジャンプ時に何秒前から再生するか</span>
