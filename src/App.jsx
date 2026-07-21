@@ -102,7 +102,7 @@ const PAIRS_INITIAL = {
 function parseYouTubeId(url) {
   if (!url) return "";
   const trimmed = url.trim();
-  const m = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{6,})/);
+  const m = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([a-zA-Z0-9_-]{6,})/);
   if (m) return m[1];
   if (/^[a-zA-Z0-9_-]{6,}$/.test(trimmed)) return trimmed;
   return "";
