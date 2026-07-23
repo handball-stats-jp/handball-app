@@ -172,7 +172,9 @@ export default function HandballLiveInput() {
   const [score, setScore] = useState(saved?.score ?? { us: 0, them: 0 });
   const [elapsed, setElapsed] = useState(saved?.elapsed ?? 0);
   const [running, setRunning] = useState(false);
-  const [events, setEvents] = useState(saved?.events ?? []); // {id, ts, team, cat, type, label, playerNum, playerName}
+  const [videoElapsed, setVideoElapsed] = useState(saved?.videoElapsed ?? 0); // 動画時間(基本止めない)
+  const [videoRunning, setVideoRunning] = useState(false);
+  const [events, setEvents] = useState(saved?.events ?? []); // {id, ts, videoTs, team, cat, type, label, playerNum, playerName}
   const [history, setHistory] = useState([]);
   const [selected, setSelected] = useState(null);
   const [subPicking, setSubPicking] = useState(false);
@@ -188,6 +190,10 @@ export default function HandballLiveInput() {
   const [timeEditOpen, setTimeEditOpen] = useState(false);
   const [timeEditMin, setTimeEditMin] = useState("0");
   const [timeEditSec, setTimeEditSec] = useState("0");
+  const [videoTimeEditOpen, setVideoTimeEditOpen] = useState(false);
+  const [videoTimeEditMin, setVideoTimeEditMin] = useState("0");
+  const [videoTimeEditSec, setVideoTimeEditSec] = useState("0");
+  const [editingEvent, setEditingEvent] = useState(null); // 記録済みイベントを後から編集する時に使う
   const toastTimer = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -196,7 +202,7 @@ export default function HandballLiveInput() {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ step, matchInfo, roster, teamNames, pairs, score, elapsed, events, matchMemo, playerMemos })
+        JSON.stringify({ step, matchInfo, roster, teamNames, pairs, score, elapsed, videoElapsed, events, matchMemo, playerMemos })
       );
     } catch {
       // 保存に失敗しても致命的ではないため何もしない
@@ -210,7 +216,7 @@ export default function HandballLiveInput() {
     const record = {
       id: `m_${Date.now()}`,
       savedAt: new Date().toISOString(),
-      matchInfo, roster, teamNames, pairs, score, elapsed, events, matchMemo, playerMemos,
+      matchInfo, roster, teamNames, pairs, score, elapsed, videoElapsed, events, matchMemo, playerMemos,
     };
     setArchive((arc) => {
       const next = [record, ...arc];
@@ -242,6 +248,7 @@ export default function HandballLiveInput() {
     setPairs(record.pairs ?? PAIRS_INITIAL);
     setScore(record.score ?? { us: 0, them: 0 });
     setElapsed(record.elapsed ?? 0);
+    setVideoElapsed(record.videoElapsed ?? 0);
     setEvents(record.events ?? []);
     setMatchMemo(record.matchMemo ?? "");
     setPlayerMemos(record.playerMemos ?? {});
@@ -263,6 +270,7 @@ export default function HandballLiveInput() {
     setPairs(PAIRS_INITIAL);
     setScore({ us: 0, them: 0 });
     setElapsed(0);
+    setVideoElapsed(0);
     setEvents([]);
     setMatchMemo("");
     setPlayerMemos({});
@@ -271,7 +279,7 @@ export default function HandballLiveInput() {
 
   // 試合データをJSONファイルとして書き出す(他の端末・他の人と共有するため)
   function exportMatchData() {
-    const data = { matchInfo, roster, teamNames, pairs, score, elapsed, events, matchMemo, playerMemos, exportedAt: new Date().toISOString() };
+    const data = { matchInfo, roster, teamNames, pairs, score, elapsed, videoElapsed, events, matchMemo, playerMemos, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -299,6 +307,7 @@ export default function HandballLiveInput() {
         setPairs(data.pairs ?? PAIRS_INITIAL);
         setScore(data.score ?? { us: 0, them: 0 });
         setElapsed(data.elapsed ?? 0);
+        setVideoElapsed(data.videoElapsed ?? 0);
         setEvents(data.events ?? []);
         setMatchMemo(data.matchMemo ?? "");
         setPlayerMemos(data.playerMemos ?? {});
@@ -318,11 +327,18 @@ export default function HandballLiveInput() {
     return () => clearInterval(id);
   }, [running]);
 
+  // 動画時間(videoElapsed)は試合時間とは独立して進む。基本的に止めずに流しっぱなしにする想定
+  useEffect(() => {
+    if (!videoRunning) return;
+    const id = setInterval(() => setVideoElapsed((e) => e + 1), 1000);
+    return () => clearInterval(id);
+  }, [videoRunning]);
+
   // モーダル/ボトムシートが開いている間は、ページを先頭に固定し背景スクロールをロックする
   // (背景がスクロールした状態のまま fixed オーバーレイを開くと、上部が見切れて操作できなくなることがあるための対策)
   useEffect(() => {
     const anyModalOpen =
-      !!selected || subPicking || shotDetailOpen || situationOpen || turnoverDetailOpen || pairEditOpen || !!playerDetailOpen || !!kpiDetailOpen || timeEditOpen;
+      !!selected || subPicking || shotDetailOpen || situationOpen || turnoverDetailOpen || pairEditOpen || !!playerDetailOpen || !!kpiDetailOpen || timeEditOpen || videoTimeEditOpen || !!editingEvent;
     if (anyModalOpen) {
       window.scrollTo(0, 0);
       document.body.style.overflow = "hidden";
@@ -332,7 +348,7 @@ export default function HandballLiveInput() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [selected, subPicking, shotDetailOpen, situationOpen, turnoverDetailOpen, pairEditOpen, playerDetailOpen, kpiDetailOpen, timeEditOpen]);
+  }, [selected, subPicking, shotDetailOpen, situationOpen, turnoverDetailOpen, pairEditOpen, playerDetailOpen, kpiDetailOpen, timeEditOpen, videoTimeEditOpen, editingEvent]);
 
   const statsByTeam = useMemo(() => {
     const base = () => ({ made: 0, attempts: 0, turnovers: 0, twoMin: 0, warnings: 0, savedByGK: 0, concededGoals: 0 });
@@ -477,12 +493,20 @@ export default function HandballLiveInput() {
 
   const videoId = parseYouTubeId(matchInfo.videoUrl);
 
-  function jumpToVideo(ts) {
-    const boundary = parseTimeToSeconds(matchInfo.halfBoundaryText);
-    const isSecondHalf = boundary > 0 && ts >= boundary;
-    const offset = isSecondHalf ? parseTimeToSeconds(matchInfo.videoOffset2Text) : parseTimeToSeconds(matchInfo.videoOffsetText);
+  function jumpToVideo(event) {
     const lead = Number(matchInfo.videoLeadSec) || 0;
-    const sec = Math.max(0, Math.floor(ts + offset - lead));
+    const offset = parseTimeToSeconds(matchInfo.videoOffsetText);
+    let sec;
+    if (event.videoTs != null) {
+      // 動画時間(videoTs)は試合の一時停止と無関係に流れ続けているので、これを使えば前半/後半でズレが出ない
+      sec = Math.max(0, Math.floor(event.videoTs + offset - lead));
+    } else {
+      // videoTsが無い古いデータ用のフォールバック(旧・前半後半オフセット方式)
+      const boundary = parseTimeToSeconds(matchInfo.halfBoundaryText);
+      const isSecondHalf = boundary > 0 && event.ts >= boundary;
+      const legacyOffset = isSecondHalf ? parseTimeToSeconds(matchInfo.videoOffset2Text) : offset;
+      sec = Math.max(0, Math.floor(event.ts + legacyOffset - lead));
+    }
     setVideoSeekSec(sec);
     setVideoSeekKey((k) => k + 1);
     setDashboardTab("video");
@@ -490,6 +514,17 @@ export default function HandballLiveInput() {
 
   function toggleMark(id) {
     setEvents((ev) => ev.map((e) => (e.id === id ? { ...e, marked: !e.marked } : e)));
+  }
+
+  // 記録済みイベントを後から編集する(ライブ中に飛ばした任意項目を、振り返り時に埋めるため)
+  function openEventEdit(event) {
+    setEditingEvent({ ...event });
+  }
+
+  function saveEventEdit() {
+    setEvents((ev) => ev.map((e) => (e.id === editingEvent.id ? { ...editingEvent } : e)));
+    setEditingEvent(null);
+    showToast("編集を保存しました");
   }
 
   function adjustElapsed(deltaSec) {
@@ -509,6 +544,25 @@ export default function HandballLiveInput() {
     setElapsed(m * 60 + s);
     setTimeEditOpen(false);
     showToast("試合時間を設定しました");
+  }
+
+  function adjustVideoElapsed(deltaSec) {
+    setVideoElapsed((e) => Math.max(0, e + deltaSec));
+    showToast(`動画時間 ${deltaSec > 0 ? "+" : ""}${deltaSec}秒 調整しました`);
+  }
+
+  function openVideoTimeEdit() {
+    setVideoTimeEditMin(String(Math.floor(videoElapsed / 60)));
+    setVideoTimeEditSec(String(videoElapsed % 60));
+    setVideoTimeEditOpen(true);
+  }
+
+  function applyVideoTimeEdit() {
+    const m = Math.max(0, Number(videoTimeEditMin) || 0);
+    const s = Math.max(0, Math.min(59, Number(videoTimeEditSec) || 0));
+    setVideoElapsed(m * 60 + s);
+    setVideoTimeEditOpen(false);
+    showToast("動画時間を設定しました");
   }
 
   function showToast(msg) {
@@ -536,7 +590,7 @@ export default function HandballLiveInput() {
   function logEvent(cat, type, label, playerNum, playerName, extra = {}) {
     pushHistory();
     setEvents((ev) => [
-      { id: Date.now() + Math.random(), ts: elapsed, team, cat, type, label, playerNum, playerName, ...extra },
+      { id: Date.now() + Math.random(), ts: elapsed, videoTs: videoElapsed, team, cat, type, label, playerNum, playerName, ...extra },
       ...ev,
     ]);
     if (cat === "shot" && type === "goal") {
@@ -765,7 +819,7 @@ export default function HandballLiveInput() {
               style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
             />
             <div className="flex items-center gap-2">
-              <span className="text-xs" style={{ color: COLORS.muted }}>前半スローオフの動画内時間</span>
+              <span className="text-xs" style={{ color: COLORS.muted }}>動画時間0:00がYouTube動画の何分何秒か</span>
               <input
                 type="text"
                 inputMode="numeric"
@@ -777,37 +831,7 @@ export default function HandballLiveInput() {
               />
             </div>
             <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
-              動画を見て、前半のスローオフの瞬間が動画の何分何秒かを「分:秒」で入力してください(例:0:30、1:05:20 のように時:分:秒でもOK)
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs" style={{ color: COLORS.muted }}>後半スローオフの動画内時間</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="32:10"
-                value={matchInfo.videoOffset2Text}
-                onChange={(e) => setMatchInfo((m) => ({ ...m, videoOffset2Text: e.target.value }))}
-                className="w-24 rounded-md px-2 py-1 text-sm font-mono"
-                style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
-              />
-            </div>
-            <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
-              ハーフタイムの休憩中も動画を止めずに撮り続けている場合、前半と後半でズレが変わります。動画を見て、後半のスローオフが何分何秒かを入れてください。
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs" style={{ color: COLORS.muted }}>前半終了時点(試合クロック)</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="30:00"
-                value={matchInfo.halfBoundaryText}
-                onChange={(e) => setMatchInfo((m) => ({ ...m, halfBoundaryText: e.target.value }))}
-                className="w-24 rounded-md px-2 py-1 text-sm font-mono"
-                style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
-              />
-            </div>
-            <div className="text-[10px] mt-1 mb-2" style={{ color: COLORS.muted }}>
-              この試合クロックの時間より後のイベントは「後半スローオフの動画内時間」を使ってジャンプします。標準は30:00です。
+              試合入力画面の「動画時間」(ヘッダーの小さい時計)は試合開始と同時に動き出し、試合を止めても流れ続けます。この動画時間の0:00が、YouTube動画の何分何秒に当たるかを入れてください。前半・後半で個別に設定する必要はありません。
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs" style={{ color: COLORS.muted }}>ジャンプ時に何秒前から再生するか</span>
@@ -891,7 +915,7 @@ export default function HandballLiveInput() {
 
         <div className="fixed bottom-0 left-0 right-0 p-4" style={{ background: COLORS.surface, borderTop: `1px solid ${COLORS.line}` }}>
           <button
-            onClick={() => setStep("live")}
+            onClick={() => { setStep("live"); setVideoRunning(true); }}
             className="w-full rounded-lg py-3 font-display font-bold text-base flex items-center justify-center gap-2"
             style={{ background: COLORS.gold, color: COLORS.bg }}
           >
@@ -1502,7 +1526,7 @@ export default function HandballLiveInput() {
                       {events.slice().reverse().filter((e) => !showOnlyMarked || e.marked).map((e) => (
                         <button
                           key={e.id}
-                          onClick={() => jumpToVideo(e.ts)}
+                          onClick={() => jumpToVideo(e)}
                           className="w-full flex items-center justify-between rounded-lg px-3 py-2 text-xs text-left"
                           style={{ background: e.marked ? "rgba(242,183,5,0.12)" : COLORS.surfaceLight, border: e.marked ? `1px solid ${COLORS.gold}` : "1px solid transparent" }}
                         >
@@ -1788,12 +1812,19 @@ export default function HandballLiveInput() {
                   .map((e) => (
                     <div key={e.id} className="rounded-lg px-3 py-2 text-xs" style={{ background: COLORS.surfaceLight }}>
                       <div className="flex items-center justify-between mb-0.5">
-                        <span className="font-display font-semibold">{e.label}</span>
+                        <button onClick={() => openEventEdit(e)} className="font-display font-semibold underline decoration-dotted text-left">{e.label}</button>
                         <div className="flex items-center gap-2">
                           <span className="font-mono" style={{ color: COLORS.muted }}>{fmt(e.ts)}</span>
+                          <button
+                            onClick={() => openEventEdit(e)}
+                            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded"
+                            style={{ background: COLORS.surface, color: COLORS.teal }}
+                          >
+                            編集
+                          </button>
                           {videoId && (
                             <button
-                              onClick={() => { jumpToVideo(e.ts); setPlayerDetailOpen(null); }}
+                              onClick={() => { jumpToVideo(e); setPlayerDetailOpen(null); }}
                               className="flex items-center gap-0.5 px-1.5 py-0.5 rounded"
                               style={{ background: COLORS.surface, color: COLORS.gold }}
                             >
@@ -1959,6 +1990,15 @@ export default function HandballLiveInput() {
             <button onClick={() => setRunning((r) => !r)} className="mt-1 rounded-full p-2" style={{ background: running ? COLORS.coral : COLORS.teal }}>
               {running ? <Pause size={16} color="#10161d" /> : <Play size={16} color="#10161d" />}
             </button>
+            <div className="flex items-center gap-1 mt-1.5">
+              <Video size={9} style={{ color: COLORS.muted }} />
+              <button onClick={openVideoTimeEdit} className="font-mono text-[11px] underline decoration-dotted" style={{ color: COLORS.muted }}>
+                {fmt(videoElapsed)}
+              </button>
+              <button onClick={() => setVideoRunning((r) => !r)} className="rounded-full p-1" style={{ background: videoRunning ? "rgba(232,96,74,0.25)" : "rgba(43,182,115,0.25)" }}>
+                {videoRunning ? <Pause size={9} color={COLORS.coral} /> : <Play size={9} color={COLORS.teal} />}
+              </button>
+            </div>
           </div>
           <div className="text-center flex-1">
             <input
@@ -2142,23 +2182,30 @@ export default function HandballLiveInput() {
                 <Star size={14} fill={e.marked ? COLORS.gold : "none"} />
               </button>
               <span className="font-mono text-xs" style={{ color: COLORS.muted }}>{fmt(e.ts)}</span>
-              <span className="flex-1 px-3">
-                <span className="text-[10px] mr-1 px-1 rounded" style={{ background: COLORS.surfaceLight, color: COLORS.muted }}>{teamNames[e.team]}</span>
-                #{e.playerNum} {e.playerName} — {e.label}
-                {(e.location || e.course || e.shotType || e.situation || e.turnoverType) && (
-                  <span className="text-xs ml-1" style={{ color: COLORS.muted }}>
-                    ({[
-                      e.situation,
-                      e.turnoverType,
-                      e.shotType,
-                      e.location,
-                      e.course ? `→${(e.courseType === "out" ? OFF_TARGET_ZONES : GOAL_ZONES).find((z) => z.code === e.course)?.label || e.course}` : null,
-                    ].filter(Boolean).join(" / ")})
-                  </span>
-                )}
-              </span>
+              {(e.cat === "shot" || e.cat === "turnover") ? (
+                <button onClick={() => openEventEdit(e)} className="flex-1 px-3 text-left">
+                  <span className="text-[10px] mr-1 px-1 rounded" style={{ background: COLORS.surfaceLight, color: COLORS.muted }}>{teamNames[e.team]}</span>
+                  #{e.playerNum} {e.playerName} — {e.label}
+                  {(e.location || e.course || e.shotType || e.situation || e.turnoverType) && (
+                    <span className="text-xs ml-1" style={{ color: COLORS.muted }}>
+                      ({[
+                        e.situation,
+                        e.turnoverType,
+                        e.shotType,
+                        e.location,
+                        e.course ? `→${(e.courseType === "out" ? OFF_TARGET_ZONES : GOAL_ZONES).find((z) => z.code === e.course)?.label || e.course}` : null,
+                      ].filter(Boolean).join(" / ")})
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <span className="flex-1 px-3">
+                  <span className="text-[10px] mr-1 px-1 rounded" style={{ background: COLORS.surfaceLight, color: COLORS.muted }}>{teamNames[e.team]}</span>
+                  #{e.playerNum} {e.playerName} — {e.label}
+                </span>
+              )}
               {videoId && (
-                <button onClick={() => jumpToVideo(e.ts)} className="flex-shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px]" style={{ background: COLORS.surfaceLight, color: COLORS.gold }}>
+                <button onClick={() => jumpToVideo(e)} className="flex-shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px]" style={{ background: COLORS.surfaceLight, color: COLORS.gold }}>
                   <Video size={10} />
                 </button>
               )}
@@ -2261,6 +2308,278 @@ export default function HandballLiveInput() {
             </button>
             <div className="text-[10px] mt-2" style={{ color: COLORS.muted }}>
               ※ 時間を変更しても、すでに記録したイベントの時刻は変わりません。今から先の記録に影響します。
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Event edit sheet (後からの振り返り編集用) */}
+      {editingEvent && (
+        <div className="fixed inset-0 z-30 flex items-end" onClick={() => setEditingEvent(null)}>
+          <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.55)" }} />
+          <div
+            className="relative w-full rounded-t-2xl p-4 pb-6 z-10 max-h-[85vh]"
+            style={{ background: COLORS.surface, borderTop: `1px solid ${COLORS.line}`, overflowY: "auto" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-display font-bold text-lg">
+                <span style={{ color: COLORS.gold }}>#{editingEvent.playerNum}</span> {editingEvent.playerName} — {editingEvent.label}
+              </div>
+              <button onClick={() => setEditingEvent(null)}><X size={20} /></button>
+            </div>
+            <div className="text-[10px] mb-4" style={{ color: COLORS.muted }}>
+              {fmt(editingEvent.ts)} の記録を編集しています。ライブ中に飛ばした項目を、ここで後から埋められます。
+            </div>
+
+            {(editingEvent.cat === "shot" || editingEvent.cat === "turnover") && (
+              <div className="mb-4">
+                <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>場面</div>
+                <div className="flex flex-wrap gap-2">
+                  {SITUATIONS.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setEditingEvent((p) => ({ ...p, situation: p.situation === s ? null : s }))}
+                      className="rounded-full px-3 py-1.5 text-xs font-display font-semibold"
+                      style={{
+                        background: editingEvent.situation === s ? COLORS.teal : COLORS.surfaceLight,
+                        color: editingEvent.situation === s ? COLORS.bg : COLORS.text,
+                        border: `1px solid ${COLORS.line}`,
+                      }}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {editingEvent.cat === "turnover" && (
+              <div className="mb-4">
+                <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>ターンオーバーの種類</div>
+                <div className="flex flex-wrap gap-2">
+                  {TURNOVER_TYPES.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setEditingEvent((p) => ({ ...p, turnoverType: p.turnoverType === t ? null : t }))}
+                      className="rounded-full px-3 py-1.5 text-xs font-display font-semibold"
+                      style={{
+                        background: editingEvent.turnoverType === t ? COLORS.coral : COLORS.surfaceLight,
+                        color: editingEvent.turnoverType === t ? COLORS.bg : COLORS.text,
+                        border: `1px solid ${COLORS.line}`,
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {editingEvent.cat === "shot" && (
+              <>
+                <div className="mb-4">
+                  <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>打った場所</div>
+                  <div className="relative w-full rounded-lg overflow-hidden" style={{ aspectRatio: "4 / 3", background: "#0d1319", border: `1px solid ${COLORS.line}` }}>
+                    <svg viewBox="0 0 200 150" preserveAspectRatio="none" className="absolute inset-0 w-full h-full" style={{ pointerEvents: "none" }}>
+                      <rect x="80" y="2" width="40" height="6" fill={COLORS.gold} />
+                      <path d="M 65 8 A 35 35 0 0 0 135 8" fill="none" stroke={COLORS.muted} strokeWidth="1.5" />
+                      <path d="M 30 8 A 70 70 0 0 0 170 8" fill="none" stroke={COLORS.muted} strokeWidth="1.5" strokeDasharray="5 4" />
+                      <line x1="4" y1="8" x2="4" y2="146" stroke={COLORS.line} strokeWidth="1.5" />
+                      <line x1="196" y1="8" x2="196" y2="146" stroke={COLORS.line} strokeWidth="1.5" />
+                    </svg>
+                    {COURT_ZONE_POSITIONS.map((z) => (
+                      <button
+                        key={z.name}
+                        onClick={() => setEditingEvent((p) => ({ ...p, location: p.location === z.name ? null : z.name }))}
+                        className="absolute rounded-md"
+                        style={{
+                          left: `${z.x}%`, top: `${z.y}%`, transform: "translate(-50%, -50%)",
+                          width: `${z.w}%`, height: `${z.h}%`,
+                          background: editingEvent.location === z.name ? COLORS.gold : "rgba(35,47,63,0.85)",
+                          border: `1px solid ${COLORS.line}`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div className="text-center text-xs mt-2" style={{ color: editingEvent.location ? COLORS.gold : COLORS.muted }}>
+                    {editingEvent.location ? `選択中: ${editingEvent.location}` : "コート図をタップして選択"}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <button
+                      onClick={() => setEditingEvent((p) => ({ ...p, location: p.location === "エンプティー" ? null : "エンプティー" }))}
+                      className="rounded-lg py-2 text-xs font-display font-semibold"
+                      style={{
+                        background: editingEvent.location === "エンプティー" ? COLORS.gold : COLORS.surfaceLight,
+                        color: editingEvent.location === "エンプティー" ? COLORS.bg : COLORS.text,
+                        border: `1px solid ${COLORS.line}`,
+                      }}
+                    >
+                      エンプティー
+                    </button>
+                    <button
+                      onClick={() => setEditingEvent((p) => ({ ...p, location: p.location === "7m" ? null : "7m" }))}
+                      className="rounded-lg py-2 text-xs font-display font-semibold"
+                      style={{
+                        background: editingEvent.location === "7m" ? COLORS.gold : COLORS.surfaceLight,
+                        color: editingEvent.location === "7m" ? COLORS.bg : COLORS.text,
+                        border: `1px solid ${COLORS.line}`,
+                      }}
+                    >
+                      7m
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>シュートコース</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-[10px] mb-1 text-center" style={{ color: COLORS.teal }}>枠内</div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {GOAL_ZONES.map((z) => (
+                          <button
+                            key={`in-${z.code}`}
+                            onClick={() =>
+                              setEditingEvent((p) => ({
+                                ...p,
+                                course: p.course === z.code && p.courseType === "in" ? null : z.code,
+                                courseType: p.course === z.code && p.courseType === "in" ? null : "in",
+                              }))
+                            }
+                            className="aspect-square rounded-md text-[10px] font-display font-semibold leading-tight px-0.5"
+                            style={{
+                              background: editingEvent.course === z.code && editingEvent.courseType === "in" ? COLORS.teal : COLORS.surfaceLight,
+                              color: editingEvent.course === z.code && editingEvent.courseType === "in" ? COLORS.bg : COLORS.text,
+                              border: `1px solid ${COLORS.line}`,
+                            }}
+                          >
+                            {z.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] mb-1 text-center" style={{ color: COLORS.coral }}>枠外</div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {OFF_TARGET_ZONES.map((z) => (
+                          <button
+                            key={`out-${z.code}`}
+                            onClick={() =>
+                              setEditingEvent((p) => ({
+                                ...p,
+                                course: p.course === z.code && p.courseType === "out" ? null : z.code,
+                                courseType: p.course === z.code && p.courseType === "out" ? null : "out",
+                              }))
+                            }
+                            className="aspect-square rounded-md text-[9px] font-display font-semibold leading-tight px-0.5"
+                            style={{
+                              background: editingEvent.course === z.code && editingEvent.courseType === "out" ? COLORS.coral : COLORS.surfaceLight,
+                              color: editingEvent.course === z.code && editingEvent.courseType === "out" ? COLORS.bg : COLORS.text,
+                              border: `1px solid ${COLORS.line}`,
+                            }}
+                          >
+                            {z.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>シュートの種類</div>
+                  <div className="flex flex-wrap gap-2">
+                    {SHOT_TYPES.map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setEditingEvent((p) => ({ ...p, shotType: p.shotType === t ? null : t }))}
+                        className="rounded-full px-3 py-1.5 text-xs font-display font-semibold"
+                        style={{
+                          background: editingEvent.shotType === t ? COLORS.gold : COLORS.surfaceLight,
+                          color: editingEvent.shotType === t ? COLORS.bg : COLORS.text,
+                          border: `1px solid ${COLORS.line}`,
+                        }}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <button
+              onClick={saveEventEdit}
+              className="w-full rounded-lg py-3 font-display font-bold text-base"
+              style={{ background: COLORS.gold, color: COLORS.bg }}
+            >
+              保存する
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Video time edit sheet */}
+      {videoTimeEditOpen && (
+        <div className="fixed inset-0 z-30 flex items-end" onClick={() => setVideoTimeEditOpen(false)}>
+          <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.55)" }} />
+          <div
+            className="relative w-full rounded-t-2xl p-4 pb-6 z-10"
+            style={{ background: COLORS.surface, borderTop: `1px solid ${COLORS.line}` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-display font-bold text-lg flex items-center gap-2"><Video size={16} /> 動画時間を修正</div>
+              <button onClick={() => setVideoTimeEditOpen(false)}><X size={20} /></button>
+            </div>
+            <div className="text-[10px] mb-3" style={{ color: COLORS.muted }}>
+              動画時間は試合を止めても流れ続ける前提の時計です。動画の再生を止め忘れた/開始が遅れた時などにここで補正してください。
+            </div>
+
+            <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>クイック調整</div>
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {[-60, -30, -10, 10, 30, 60].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => adjustVideoElapsed(d)}
+                  className="rounded-lg py-2.5 text-sm font-display font-semibold"
+                  style={{ background: COLORS.surfaceLight, color: d < 0 ? COLORS.coral : COLORS.teal, border: `1px solid ${COLORS.line}` }}
+                >
+                  {d > 0 ? `+${d}秒` : `${d}秒`}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.muted }}>時間を直接指定</div>
+            <div className="flex items-center gap-2 mb-4">
+              <input
+                type="number"
+                value={videoTimeEditMin}
+                onChange={(e) => setVideoTimeEditMin(e.target.value)}
+                className="w-20 rounded-md px-2 py-2 text-center font-mono text-lg"
+                style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
+              />
+              <span className="text-sm" style={{ color: COLORS.muted }}>分</span>
+              <input
+                type="number"
+                value={videoTimeEditSec}
+                onChange={(e) => setVideoTimeEditSec(e.target.value)}
+                className="w-20 rounded-md px-2 py-2 text-center font-mono text-lg"
+                style={{ background: COLORS.surfaceLight, color: COLORS.text, border: `1px solid ${COLORS.line}` }}
+              />
+              <span className="text-sm" style={{ color: COLORS.muted }}>秒</span>
+            </div>
+
+            <button
+              onClick={applyVideoTimeEdit}
+              className="w-full rounded-lg py-3 font-display font-bold text-base"
+              style={{ background: COLORS.gold, color: COLORS.bg }}
+            >
+              この時間に設定する
+            </button>
+            <div className="text-[10px] mt-2" style={{ color: COLORS.muted }}>
+              ※ 変更しても、すでに記録したイベントの動画時間は変わりません。今から先の記録に影響します。
             </div>
           </div>
         </div>
