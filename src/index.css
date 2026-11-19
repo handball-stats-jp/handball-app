@@ -2,6 +2,8 @@
 @import "tailwindcss";
 
 html, body, #root { height: 100%; margin: 0; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body { background: #10161d; }
 .font-display { font-family: 'Oswald', sans-serif; }
 .font-body { font-family: 'Work Sans', sans-serif; }
 .font-mono { font-family: 'JetBrains Mono', monospace; }

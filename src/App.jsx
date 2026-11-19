@@ -720,7 +720,7 @@ export default function HandballLiveInput() {
       <div className="font-body min-h-screen w-full flex flex-col" style={{ background: COLORS.bg, color: COLORS.text }}>
         <style>{FONT_STYLE}</style>
 
-        <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
+        <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1.25rem)", background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
           <div>
             <div className="font-display font-bold text-2xl">試合設定</div>
             <div className="text-xs mt-1" style={{ color: COLORS.muted }}>チーム名・選手・日時を入力してから試合を開始します</div>
@@ -913,7 +913,7 @@ export default function HandballLiveInput() {
           ))}
         </div>
 
-        <div className="fixed bottom-0 left-0 right-0 p-4" style={{ background: COLORS.surface, borderTop: `1px solid ${COLORS.line}` }}>
+        <div className="fixed bottom-0 left-0 right-0 p-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)", background: COLORS.surface, borderTop: `1px solid ${COLORS.line}` }}>
           <button
             onClick={() => { setStep("live"); setVideoRunning(true); }}
             className="w-full rounded-lg py-3 font-display font-bold text-base flex items-center justify-center gap-2"
@@ -935,7 +935,7 @@ export default function HandballLiveInput() {
       <div className="font-body min-h-screen w-full flex flex-col" style={{ background: COLORS.bg, color: COLORS.text }}>
         <style>{FONT_STYLE}</style>
 
-        <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
+        <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1.25rem)", background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
           <div>
             <div className="font-display font-bold text-2xl">試合一覧</div>
             <div className="text-xs mt-1" style={{ color: COLORS.muted }}>この端末に保存されている過去の試合</div>
@@ -1029,7 +1029,7 @@ export default function HandballLiveInput() {
       return (
         <div className="font-body min-h-screen w-full flex flex-col" style={{ background: COLORS.bg, color: COLORS.text }}>
           <style>{FONT_STYLE}</style>
-          <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
+          <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1.25rem)", background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
             <div>
               <div className="font-display font-bold text-2xl">スカウティング</div>
               <div className="text-xs mt-1" style={{ color: COLORS.muted }}>対戦したことのある相手を選んでください</div>
@@ -1132,7 +1132,7 @@ export default function HandballLiveInput() {
     return (
       <div className="font-body min-h-screen w-full flex flex-col" style={{ background: COLORS.bg, color: COLORS.text }}>
         <style>{FONT_STYLE}</style>
-        <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
+        <div className="sticky top-0 z-10 px-4 pt-5 pb-4 flex items-center justify-between" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1.25rem)", background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
           <div>
             <div className="font-display font-bold text-xl">{scoutingOpponent}</div>
             <div className="text-xs mt-1" style={{ color: COLORS.muted }}>過去{matches.length}試合分のスカウティングレポート</div>
@@ -1251,7 +1251,7 @@ export default function HandballLiveInput() {
         <div className="h-full w-full overflow-y-auto">
 
         {/* Header */}
-        <div className="px-4 pt-5 pb-4" style={{ borderBottom: `1px solid ${COLORS.line}`, background: COLORS.surface }}>
+        <div className="px-4 pt-5 pb-4" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1.25rem)", borderBottom: `1px solid ${COLORS.line}`, background: COLORS.surface }}>
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px]" style={{ color: COLORS.muted }}>
               {matchInfo.date || "日付未設定"} {matchInfo.venue && `・ ${matchInfo.venue}`}
@@ -1956,7 +1956,7 @@ export default function HandballLiveInput() {
       <div className="h-full w-full flex flex-col overflow-y-auto">
 
       {/* Scoreboard header */}
-      <div className="sticky top-0 z-20 px-4 pt-4 pb-3" style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
+      <div className="sticky top-0 z-20 px-4 pt-4 pb-3" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1rem)", background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}` }}>
         <div className="flex items-center justify-between mb-1">
           <span className="text-[10px]" style={{ color: COLORS.muted }}>
             {matchInfo.date || "日付未設定"} {matchInfo.venue && `・ ${matchInfo.venue}`}
